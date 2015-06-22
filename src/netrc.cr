@@ -266,8 +266,11 @@ class Netrc
 
   def save
     if @path =~ /\.gpg$/
+      # TODO(jhp) how do you actually call gpg?
       status = Process.run("/bin/sh", 
-        {"echo", unparse, "|", "gpg", "-a", "--batch", "--default-recipient-self", "-o", @path, "-e"})
+        input: ["/bin/echo", unparse, "|", "gpg", "-a", "--batch", "--default-recipient-self", "-o", @path, "-e"].join(" "),
+        output: true)
+      pp status
       raise Exception.new("Encrypting #{@path} failed.") unless status.success?
     else
       File.open(@path, "w") {|file| file.print(unparse)}
