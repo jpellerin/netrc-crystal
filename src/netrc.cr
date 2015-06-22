@@ -65,30 +65,59 @@ module Netrc
 
   def self.lex(lines)
     tokens = [] of String
-    last = ""
+    
     lines.each do |line|
-      content, comment = line.split(/(\s*#.*)/m)
-      content.each_char do |char|
-        case char
-        when /\s/
-          if last && last[-1..-1] =~ /\s/
-            last += char.to_s
-          else
-            tokens << char.to_s
-            last = tokens.last
-          end
+      tok = nil
+      comment = nil
+      line.each_char_with_index do |ch, i|
+        char = ch.to_s
+        if comment
+          comment = comment + char
         else
-          if last && last[-1..-1] =~ /\S/
-            last += char.to_s
+          # handle the "space before comment" case
+          peek = line[i+1]?
+          if peek == '#'
+            if tok
+              tokens << tok
+            end
+            tok = nil
+            comment = char
           else
-            tokens << char.to_s
-            last = tokens.last
+            case char
+            when "#"
+              if tok
+                tokens << tok
+              end
+              tok = nil
+              comment = char
+            when /\s/
+              if tok && tok =~ /\s/
+                tok = tok + char
+              else
+                if tok
+                  tokens << tok
+                end
+                tok = char
+              end
+            else
+              if tok && tok =~ /\S/
+                tok = tok + char
+              else
+                if tok
+                  tokens << tok
+                end
+                tok = char
+              end
+            end
           end
         end
-      end
-      if comment
-        tokens << comment
-        last = tokens.last
+        if i == line.length() -1
+          if tok
+            tokens << tok
+          elsif comment
+            tokens << comment
+          end
+        end
       end
     end
     tokens
