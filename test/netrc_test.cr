@@ -47,7 +47,6 @@ class TestNetrc < Minitest::Test
   end
 
   def test_missing_file
-    # pp "test missing file"
     n = Netrc.read("data/nonexistent.netrc")
     assert_equal(0, n.length)
   end
@@ -133,7 +132,6 @@ class TestNetrc < Minitest::Test
     # unless Netrc::WINDOWS
     # assert_equal(0600, File.stat("/tmp/created.netrc").mode & 0777)
     # end
-    # pp "end test save create"
   end
 
   def test_encrypted_roundtrip
