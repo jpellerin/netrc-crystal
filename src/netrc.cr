@@ -12,7 +12,7 @@ class Netrc
   end
 
   def self.home_path
-    home = ENV["HOME"]
+    home = ENV["HOME"]?
 
     if WINDOWS && !CYGWIN
       home ||= File.join(ENV["HOMEDRIVE"], ENV["HOMEPATH"]) if ENV["HOMEDRIVE"] && ENV["HOMEPATH"]
@@ -60,7 +60,6 @@ class Netrc
     else
       File.read_lines(path)
     end
-    pp data
     if data
       new(path, parse(lex(data)))
     else
@@ -193,11 +192,10 @@ class Netrc
     l.join
   end
 
-  def initialize(@path, data)
+  def initialize(@path, data : {String, Array(Array(String))?})
     @new_item_prefix = ""
     @pre, @data = data
-
-    if @data && @data.last && "default" == @data.last[0]
+    if @data && @data.length > 0 && @data.last && @data.last.length > 0 && "default" == @data.last[0]
       @default = @data.pop
     else
       @default = nil
@@ -268,14 +266,15 @@ class Netrc
 
   def save
     if @path =~ /\.gpg$/
-      status = Process.run("/bin/sh", args=["'gpg -a --batch --default-recipient-self -e -o #{@path}'"], input=StringIO.new(unparse))
+      status = Process.run("/bin/sh", 
+        {"echo", unparse, "|", "gpg", "-a", "--batch", "--default-recipient-self", "-o", @path, "-e"})
       raise Exception.new("Encrypting #{@path} failed.") unless status.success?
     else
       File.open(@path, "w") {|file| file.print(unparse)}
     end
   end
 
-  def unparse
+  def unparse : String
     @pre + @data.map do |datum|
       datum = datum.join
       unless datum[-1..-1] == "\n"
