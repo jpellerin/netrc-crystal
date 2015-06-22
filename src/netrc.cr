@@ -1,4 +1,6 @@
-module Netrc
+require "process"
+
+class Netrc
   property new_item_prefix
 
   # TODO(jhp) add windows support
@@ -10,7 +12,7 @@ module Netrc
   end
 
   def self.home_path
-    home = Dir.respond_to?(:home) ? Dir.home : ENV["HOME"]
+    home = ENV["HOME"]
 
     if WINDOWS && !CYGWIN
       home ||= File.join(ENV["HOMEDRIVE"], ENV["HOMEPATH"]) if ENV["HOMEDRIVE"] && ENV["HOMEPATH"]
@@ -19,9 +21,9 @@ module Netrc
       home = home.gsub("\\", "/") unless home.nil?
     end
 
-    (home && File.readable?(home)) ? home : Dir.pwd
+    (home && File.exists?(home)) ? home : Dir.working_directory
   rescue ArgumentError
-    return Dir.pwd
+    return Dir.working_directory
   end
 
   def self.netrc_filename
@@ -29,7 +31,7 @@ module Netrc
   end
 
   def self.config
-    @config ||= {} of Symbol => (Bool|String|Int32)
+    @@config ||= {} of Symbol => (Bool|String|Int32)
   end
 
   def self.configure
@@ -39,8 +41,8 @@ module Netrc
 
   def self.check_permissions(path)
     perm = File.stat(path).mode & 0777
-    if perm != 0600 && !(WINDOWS) && !(Netrc.config[:allow_permissive_netrc_file])
-      raise Error, "Permission bits for "#{path}" should be 0600, but are "+perm.to_s(8)
+    if perm != 0600 && !(WINDOWS) && !(Netrc.config[:allow_permissive_netrc_file]?)
+      raise Exception.new(%x(Permission bits for "#{path}" should be 0600, but are )+perm.to_s(8))
     end
   end
 
@@ -51,15 +53,20 @@ module Netrc
     data = if path =~ /\.gpg$/
       decrypted = `gpg --batch --quiet --decrypt #{path}`
       if $?.success?
-        decrypted
+        decrypted.split("\n")
       else
-        raise Error.new("Decrypting #{path} failed.") unless $?.success?
+        raise Exception.new("Decrypting #{path} failed.")
       end
     else
-      File.read(path)
+      File.read_lines(path)
     end
-    new(path, parse(lex(data.lines.to_a)))
-  rescue Errno::ENOENT
+    pp data
+    if data
+      new(path, parse(lex(data)))
+    else
+      raise Exception.new("Could not load #{path}")
+    end
+  rescue Errno
     new(path, parse(lex([] of String)))
   end
 
@@ -138,47 +145,47 @@ module Netrc
   # - trailing chars
   # This lets us change individual fields, then write out the file
   # with all its original formatting.
-  def self.parse(ts)
-    cur, item = [] of String, [] of String
+  def self.parse(ts) : {String, Array(Array(String))}
+    cur, item = [] of String, [] of Array(String)
 
-    pre = readto{|t| t == "machine" || t == "default"}
+    pre = readto(ts){|t| t == "machine" || t == "default"}
 
     while ts.length > 0
       if ts[0] == "default"
         cur << take ts
         cur << ""
       else
-        cur << take(ts) + readto ts {|t| ! skip?(t)}
+        cur << take(ts) + readto(ts) {|t| ! skip?(t)}
         cur << take ts
       end
 
-      if ts.include?("login")
-        cur << readto ts {|t| t == "login"} + take(ts) + readto ts {|t| ! skip?(t)}
+      if ts.includes?("login")
+        cur << readto(ts) {|t| t == "login"} + take(ts) + readto(ts) {|t| ! skip?(t)}
         cur << take(ts)
       end
 
-      if ts.include?("password")
-        cur << readto ts {|t| t == "password"} + take(ts) + readto ts {|t| ! skip?(t)}
+      if ts.includes?("password")
+        cur << readto(ts) {|t| t == "password"} + take(ts) + readto(ts) {|t| ! skip?(t)}
         cur << take ts
       end
 
-      cur << readto ts {|t| t == "machine" || t == "default"}
+      cur << readto(ts) {|t| t == "machine" || t == "default"}
 
       item << cur
       cur = [] of String
     end
 
-    [pre, item]
+    {pre, item}
   end
 
-  def take(ts)
+  def self.take(ts)
     if ts.length < 1
-      raise Error, "unexpected EOF"
+      raise Exception.new("unexpected EOF")
     end
     ts.shift
   end
 
-  def readto(ts)
+  def self.readto(ts)
     l = [] of String
     while ts.length > 0 && ! yield(ts[0])
       l << ts.shift
@@ -186,31 +193,60 @@ module Netrc
     l.join
   end
 
-  def initialize(path, data)
+  def initialize(@path, data)
     @new_item_prefix = ""
-    @path = path
     @pre, @data = data
 
-    if @data && @data.last && :default == @data.last[0]
+    if @data && @data.last && "default" == @data.last[0]
       @default = @data.pop
     else
       @default = nil
     end
   end
 
+  def detect?
+    i = 0
+    while i < length
+      e = @data[i]
+      if yield e
+        return e
+      end
+      i += 1
+    end
+    nil
+  end
+
   def [](k)
-    if item = @data.detect {|datum| datum[1] == k}
+    if item = detect? {|datum| datum[1] == k}
       Entry.new(item[3], item[5])
-    elsif @default
-      Entry.new(@default[3], @default[5])
+    else 
+      # Have to alias to a local var to pass nil check
+      df = @default
+      if df 
+        Entry.new(df[3], df[5])
+      end
     end
   end
 
-  def []=(k, info)
-    if item = @data.detect {|datum| datum[1] == k}
-      item[3], item[5] = info
+  def []=(k, info : Entry)
+    l, p = info.login, info.password
+    append(k, [l, p])
+  end
+
+  def []=(k, info : Array(String))
+    append(k, info)
+  end
+
+  def append(k, info : Array(String?))
+    l, p = info
+    if l && p
+      if item = detect? {|datum| datum[1] == k}    
+        item[3], item[5] = l, p
+      else
+        @data << new_item(k, l, p)
+      end
     else
-      @data << new_item(k, info[0], info[1])
+      raise Exception.new("Invalid login/password array")
     end
   end
 
@@ -232,15 +268,10 @@ module Netrc
 
   def save
     if @path =~ /\.gpg$/
-      e = IO.popen("gpg -a --batch --default-recipient-self -e", "r+") do |gpg|
-        gpg.puts(unparse)
-        gpg.close_write
-        gpg.read
-      end
-      raise Error.new("Encrypting #{@path} failed.") unless $?.success?
-      File.open(@path, "w", 0600) {|file| file.print(e)}
+      status = Process.run("/bin/sh", args=["'gpg -a --batch --default-recipient-self -e -o #{@path}'"], input=StringIO.new(unparse))
+      raise Exception.new("Encrypting #{@path} failed.") unless status.success?
     else
-      File.open(@path, "w", 0600) {|file| file.print(unparse)}
+      File.open(@path, "w") {|file| file.print(unparse)}
     end
   end
 
@@ -248,14 +279,41 @@ module Netrc
     @pre + @data.map do |datum|
       datum = datum.join
       unless datum[-1..-1] == "\n"
-        datum << "\n"
+        datum += "\n"
       else
         datum
       end
     end.join
   end
 
-  Entry = Struct.new(:login, :password)
+  struct Entry
+    property login
+    property password
+
+    def initialize(@login, @password)
+    end
+
+    def initialize()
+    end
+
+    def [](k)
+      to_a[k]
+    end
+
+    def [](k : Symbol)
+      if k == :login
+        @login
+      elsif k == :password
+        @password
+      else
+        raise MissingKey.new("Entry has no property #{k}")
+      end
+    end
+
+    def to_a
+      [@login, @password] of String?
+    end
+  end
 
 end
 

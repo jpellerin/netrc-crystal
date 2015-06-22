@@ -1,29 +1,24 @@
 $VERBOSE = true
-require 'minitest/autorun'
-require 'fileutils'
+require "minitest/autorun"
 
-require File.expand_path("#{File.dirname(__FILE__)}/../lib/netrc")
-require "rbconfig"
+require "../src/netrc"
 
 class TestNetrc < Minitest::Test
 
-  def setup
-    Dir.glob('data/*.netrc').each{|f| File.chmod(0600, f)}
-    File.chmod(0644, "data/permissive.netrc")
-  end
-
-  def teardown
-    Dir.glob('data/*.netrc').each{|f| File.chmod(0644, f)}
+  def readlines(io)
+    lines = [] of String
+    io.each_line{ |l| lines << l }
+    lines
   end
 
   def test_parse_empty
-    pre, items = Netrc.parse(Netrc.lex([]))
+    pre, items = Netrc.parse(Netrc.lex([] of String))
     assert_equal("", pre)
-    assert_equal([], items)
+    assert_equal([] of String, items)
   end
 
   def test_parse_file
-    pre, items = Netrc.parse(Netrc.lex(IO.readlines("data/sample.netrc")))
+    pre, items = Netrc.parse(Netrc.lex(readlines("data/sample.netrc")))
     assert_equal("# this is my netrc\n", pre)
     exp = [["machine ",
             "m",
@@ -36,7 +31,7 @@ class TestNetrc < Minitest::Test
   end
 
   def test_login_file
-    pre, items = Netrc.parse(Netrc.lex(IO.readlines("data/login.netrc")))
+    pre, items = Netrc.parse(Netrc.lex(readlines("data/login.netrc")))
     assert_equal("# this is my login netrc\n", pre)
     exp = [["machine ",
             "m",
@@ -47,7 +42,7 @@ class TestNetrc < Minitest::Test
   end
 
   def test_password_file
-    pre, items = Netrc.parse(Netrc.lex(IO.readlines("data/password.netrc")))
+    pre, items = Netrc.parse(Netrc.lex(readlines("data/password.netrc")))
     assert_equal("# this is my password netrc\n", pre)
     exp = [["machine ",
             "m",
@@ -62,53 +57,9 @@ class TestNetrc < Minitest::Test
     assert_equal(0, n.length)
   end
 
-  def test_permission_error
-    original_windows = Netrc::WINDOWS
-    Netrc.send(:remove_const, :WINDOWS)
-    Netrc.const_set(:WINDOWS, false)
-    Netrc.read("data/permissive.netrc")
-    assert false, "Should raise an error if permissions are wrong on a non-windows system."
-  rescue Netrc::Error
-    assert true, ""
-  ensure
-    Netrc.send(:remove_const, :WINDOWS)
-    Netrc.const_set(:WINDOWS, original_windows)
-  end
-
-  def test_allow_permissive_netrc_file_option
-    Netrc.configure do |config|
-      config[:allow_permissive_netrc_file] = true
-    end
-    original_windows = Netrc::WINDOWS
-    Netrc.send(:remove_const, :WINDOWS)
-    Netrc.const_set(:WINDOWS, false)
-    Netrc.read("data/permissive.netrc")
-    assert true, ""
-  rescue Netrc::Error
-    assert false, "Should not raise an error if allow_permissive_netrc_file option is set to true"
-  ensure
-    Netrc.send(:remove_const, :WINDOWS)
-    Netrc.const_set(:WINDOWS, original_windows)
-    Netrc.configure do |config|
-      config[:allow_permissive_netrc_file] = false
-    end
-  end
-
-  def test_permission_error_windows
-    original_windows = Netrc::WINDOWS
-    Netrc.send(:remove_const, :WINDOWS)
-    Netrc.const_set(:WINDOWS, true)
-    Netrc.read("data/permissive.netrc")
-  rescue Netrc::Error
-    assert false, "Should not raise an error if permissions are wrong on a non-windows system."
-  ensure
-    Netrc.send(:remove_const, :WINDOWS)
-    Netrc.const_set(:WINDOWS, original_windows)
-  end
-
   def test_round_trip
     n = Netrc.read("data/sample.netrc")
-    assert_equal(IO.read("data/sample.netrc"), n.unparse)
+    assert_equal(File.read("data/sample.netrc"), n.unparse)
   end
 
   def test_set
@@ -124,7 +75,7 @@ class TestNetrc < Minitest::Test
   def test_set_get
     n = Netrc.read("data/sample.netrc")
     n["m"] = "a", "b"
-    assert_equal(["a", "b"], n["m"].to_a)
+    assert_equal(["a", "b"], n["m"].try{|v| v.to_a})
   end
 
   def test_add
@@ -161,7 +112,7 @@ class TestNetrc < Minitest::Test
     n = Netrc.read("data/sample.netrc")
     n.new_item_prefix = "# added\n"
     n["x"] = "a", "b"
-    assert_equal(["a", "b"], n["x"].to_a)
+    assert_equal(["a", "b"], n["x"].try{ |v| v.to_a })
   end
 
   def test_get_missing
@@ -176,7 +127,7 @@ class TestNetrc < Minitest::Test
   end
 
   def test_save_create
-    FileUtils.rm_f("/tmp/created.netrc")
+    try { File.delete("/tmp/created.netrc") }
     n = Netrc.read("/tmp/created.netrc")
     n.save
     unless Netrc::WINDOWS
@@ -186,47 +137,58 @@ class TestNetrc < Minitest::Test
 
   def test_encrypted_roundtrip
     if `gpg --list-keys 2> /dev/null` != ""
-      FileUtils.rm_f("/tmp/test.netrc.gpg")
+      try { File.delete("/tmp/test.netrc.gpg") }
       n = Netrc.read("/tmp/test.netrc.gpg")
       n["m"] = "a", "b"
       n.save
       assert_equal(0600, File.stat("/tmp/test.netrc.gpg").mode & 0777)
       netrc = Netrc.read("/tmp/test.netrc.gpg")["m"]
-      assert_equal("a", netrc.login)
-      assert_equal("b", netrc.password)
+      assert netrc
+      if netrc
+        assert_equal("a", netrc.login)
+        assert_equal("b", netrc.password)
+      end
     end
   end
 
   def test_missing_environment
-    nil_home = nil
-    ENV["HOME"], nil_home = nil_home, ENV["HOME"]
-    assert_equal File.join(Dir.pwd, '.netrc'), Netrc.default_path
+    home = ENV["HOME"]
+    ENV.delete("HOME")
+    assert_equal File.join(Dir.working_directory, ".netrc"), Netrc.default_path
   ensure
-    ENV["HOME"], nil_home = nil_home, ENV["HOME"]
+    if home
+      ENV["HOME"] = home
+    end
   end
 
   def test_read_entry
-    entry = Netrc.read("data/sample.netrc")['m']
-    assert_equal 'l', entry.login
-    assert_equal 'p', entry.password
+    entry = Netrc.read("data/sample.netrc")["m"]
+    assert entry
+    if entry
+      assert_equal "l", entry.login
+      assert_equal "p", entry.password
 
-    # hash-style
-    assert_equal 'l', entry[:login]
-    assert_equal 'p', entry[:password]
+      # hash-style
+      assert_equal "l", entry[:login]
+      assert_equal "p", entry[:password]
+    end
   end
 
   def test_write_entry
     n = Netrc.read("data/sample.netrc")
-    entry = n['m']
-    entry.login    = 'new_login'
-    entry.password = 'new_password'
-    n['m'] = entry
-    assert_equal(['new_login', 'new_password'], n['m'].to_a)
+    entry = n["m"]
+    assert entry
+    if entry
+      entry.login    = "new_login"
+      entry.password = "new_password"
+      n["m"] = entry
+      assert_equal(["new_login", "new_password"], n["m"].try{ |v| v.to_a })
+    end
   end
 
   def test_entry_splat
     e = Netrc::Entry.new("user", "pass")
-    user, pass = *e
+    user, pass = e
     assert_equal("user", user)
     assert_equal("pass", pass)
   end
@@ -239,28 +201,31 @@ class TestNetrc < Minitest::Test
   end
 
   def test_with_default
-    netrc = Netrc.read('data/sample_with_default.netrc')
-    assert_equal(['l', 'p'], netrc['m'].to_a)
-    assert_equal(['default_login', 'default_password'], netrc['unknown'].to_a)
+    netrc = Netrc.read("data/sample_with_default.netrc")
+    assert_equal(["l", "p"], netrc["m"].try{|v| v.to_a})
+    assert_equal(["default_login", "default_password"], netrc["unknown"].try{|v| v.to_a})
   end
 
   def test_multi_without_default
-    netrc = Netrc.read('data/sample_multi.netrc')
-    assert_equal(['lm', 'pm'], netrc['m'].to_a)
-    assert_equal(['ln', 'pn'], netrc['n'].to_a)
-    assert_equal([], netrc['other'].to_a)
+    netrc = Netrc.read("data/sample_multi.netrc")
+    assert netrc
+    if netrc
+      assert_equal(["lm", "pm"], netrc["m"].try{|v| v.to_a})
+      assert_equal(["ln", "pn"], netrc["n"].try{|v| v.to_a})
+      assert_equal([] of String, netrc["other"].try{|v| v.to_a})
+    end
   end
 
   def test_multi_with_default
-    netrc = Netrc.read('data/sample_multi_with_default.netrc')
-    assert_equal(['lm', 'pm'], netrc['m'].to_a)
-    assert_equal(['ln', 'pn'], netrc['n'].to_a)
-    assert_equal(['ld', 'pd'], netrc['other'].to_a)
+    netrc = Netrc.read("data/sample_multi_with_default.netrc")
+    assert_equal(["lm", "pm"], netrc["m"].try{|v| v.to_a})
+    assert_equal(["ln", "pn"], netrc["n"].try{|v| v.to_a})
+    assert_equal(["ld", "pd"], netrc["other"].try{|v| v.to_a})
   end
 
   def test_default_only
-    netrc = Netrc.read('data/default_only.netrc')
-    assert_equal(['ld', 'pd'], netrc['m'].to_a)
-    assert_equal(['ld', 'pd'], netrc['other'].to_a)
+    netrc = Netrc.read("data/default_only.netrc")
+    assert_equal(["ld", "pd"], netrc["m"].try{|v| v.to_a})
+    assert_equal(["ld", "pd"], netrc["other"].try{|v| v.to_a})
   end
 end

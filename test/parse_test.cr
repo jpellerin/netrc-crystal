@@ -1,19 +1,19 @@
 $VERBOSE = true
-require 'minitest/autorun'
+require "minitest/autorun"
 
-require File.expand_path("#{File.dirname(__FILE__)}/../lib/netrc")
+require "../src/netrc"
 
 class TestParse < Minitest::Test
   def test_parse_empty
-    pre, items = Netrc.parse([])
+    pre, items = Netrc.parse([] of String)
     assert_equal("", pre)
-    assert_equal([], items)
+    assert_equal([] of String, items)
   end
 
   def test_parse_comment
     pre, items = Netrc.parse(["# foo\n"])
     assert_equal("# foo\n", pre)
-    assert_equal([], items)
+    assert_equal([] of String, items)
   end
 
   def test_parse_item
@@ -25,10 +25,12 @@ class TestParse < Minitest::Test
   end
 
   def test_parse_two_items
-    t = ["machine", " ", "m", " ", "login", " ", "l", " ", "password", " ", "p", "\n"] * 2
+    t = ["machine", " ", "m", " ", "login", " ", "l", " ", "password", " ", "p", "\n"]
+    t = t + t
     pre, items = Netrc.parse(t)
     assert_equal("", pre)
-    e = [["machine ", "m", " login ", "l", " password ", "p", "\n"]] * 2
+    e = [["machine ", "m", " login ", "l", " password ", "p", "\n"]]
+    e = e + e
     assert_equal(e, items)
   end
 end
