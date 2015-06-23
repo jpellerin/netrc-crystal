@@ -86,13 +86,9 @@ class Netrc
           tok = nil
           comment = char
         when char =~ /\s/ && tok =~ /\s/, char =~ /\S/ && tok =~ /\S/
-          if tok
-            tok = tok + char
-          else
-            tok = char
-          end
+          tok = tok ? tok + char : char
         else
-          tok.try{|t| tokens << t}
+          tok.try{ |t| tokens << t }
           tok = char
         end
         if i == line.length() -1
