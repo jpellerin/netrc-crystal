@@ -71,51 +71,29 @@ class Netrc
 
   def self.lex(lines)
     tokens = [] of String
-    
     lines.each do |line|
       tok = nil
       comment = nil
       line.each_char_with_index do |ch, i|
         char = ch.to_s
-        if comment
+        peek = line[i+1]?
+        case
+        when comment
           comment = comment + char
-        else
+        when char == "#", char =~ /\s/ && peek == '#'
           # handle the "space before comment" case
-          peek = line[i+1]?
-          if peek == '#'
-            if tok
-              tokens << tok
-            end
-            tok = nil
-            comment = char
+          tok.try{ |t| tokens << t }
+          tok = nil
+          comment = char
+        when char =~ /\s/ && tok =~ /\s/, char =~ /\S/ && tok =~ /\S/
+          if tok
+            tok = tok + char
           else
-            case char
-            when "#"
-              if tok
-                tokens << tok
-              end
-              tok = nil
-              comment = char
-            when /\s/
-              if tok && tok =~ /\s/
-                tok = tok + char
-              else
-                if tok
-                  tokens << tok
-                end
-                tok = char
-              end
-            else
-              if tok && tok =~ /\S/
-                tok = tok + char
-              else
-                if tok
-                  tokens << tok
-                end
-                tok = char
-              end
-            end
+            tok = char
           end
+        else
+          tok.try{|t| tokens << t}
+          tok = char
         end
         if i == line.length() -1
           if tok
@@ -217,10 +195,10 @@ class Netrc
   def [](k)
     if item = detect? {|datum| datum[1] == k}
       Entry.new(item[3], item[5])
-    else 
+    else
       # Have to alias to a local var to pass nil check
       df = @default
-      if df 
+      if df
         Entry.new(df[3], df[5])
       end
     end
@@ -238,7 +216,7 @@ class Netrc
   def append(k, info : Array(String?))
     l, p = info
     if l && p
-      if item = detect? {|datum| datum[1] == k}    
+      if item = detect? {|datum| datum[1] == k}
         item[3], item[5] = l, p
       else
         @data << new_item(k, l, p)
@@ -267,7 +245,7 @@ class Netrc
   def save
     if @path =~ /\.gpg$/
       # TODO(jhp) how do you actually call gpg?
-      status = Process.run("/bin/sh", 
+      status = Process.run("/bin/sh",
         input: ["/bin/echo", unparse, "|", "gpg", "-a", "--batch", "--default-recipient-self", "-o", @path, "-e"].join(" "),
         output: true)
       pp status
